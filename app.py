@@ -1948,19 +1948,29 @@ elif page == "뉴스":
             label_visibility="collapsed"
         )
 
-        cache_key = f"news2_{selected_category}"
+        @st.cache_data(ttl=1800)
+        def fetch_news_by_category(category, keyword):
+            import re as _re
+            from datetime import date as _d
+            today_str = _d.today().strftime("%Y.%m.%d")
+            result = ask_perplexity(
+                f"오늘은 {today_str}이야. {keyword} 관련 오늘({today_str}) 보도된 뉴스만 10개를 최신 순으로 한국어로 작성해줘.\n"
+                f"오늘 보도된 뉴스가 10개 미만이면 가장 최근 날짜 순으로 채워줘. 단 날짜 필드에 실제 보도 날짜를 정확히 적을 것.\n"
+                f"해당 분야 주요 주식 주가에 큰 영향을 끼칠 수 있는 뉴스는 중요도를 HIGH로 표시해줘.\n"
+                f"반드시 10개 전부 작성할 것. 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지.\n"
+                f"각 뉴스는 아래 형식을 정확히 지키고, 뉴스 사이 구분은 반드시 ===로만 할 것.\n\n"
+                f"제목: 뉴스 제목\n출처: 신문사명\n날짜: {today_str}\n"
+                f"중요도: HIGH 또는 NORMAL\n요약: 한 줄 핵심 요약\n"
+                f"상세: 3~4문장 상세 내용. 배경 원인 시장영향 포함.\n==="
+            )
+            result = _re.sub(r'\[\d+\]', '', result)
+            result = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', result)
+            return result
 
-        if cache_key not in st.session_state:
-            with st.spinner(f"{selected_category} 뉴스 불러오는 중..."):
-                keyword = NEWS_CATEGORIES[selected_category]
-                from datetime import date
-                today_str = date.today().strftime("%Y.%m.%d")
-                result = ask_perplexity(f"오늘은 {today_str}이야. {keyword} 관련 오늘({today_str}) 보도된 뉴스만 10개를 최신 순으로 한국어로 작성해줘.\n오늘 보도된 뉴스가 10개 미만이면 가장 최근 날짜 순으로 채워줘. 단 날짜 필드에 실제 보도 날짜를 정확히 적을 것.\n해당 분야 주요 주식 주가에 큰 영향을 끼칠 수 있는 뉴스는 중요도를 HIGH로 표시해줘.\n반드시 10개 전부 작성할 것. 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지.\n각 뉴스는 아래 형식을 정확히 지키고, 뉴스 사이 구분은 반드시 ===로만 할 것.\n\n제목: 뉴스 제목\n출처: 신문사명\n날짜: {today_str}\n중요도: HIGH 또는 NORMAL\n요약: 한 줄 핵심 요약\n상세: 3~4문장 상세 내용. 배경 원인 시장영향 포함.\n===")
-                result = re.sub(r'\[\d+\]', '', result)
-                result = re.sub(r'\*\*?(.*?)\*\*?', r'\1', result)
-                st.session_state[cache_key] = result
+        with st.spinner(f"{selected_category} 뉴스 불러오는 중..."):
+            news_raw = fetch_news_by_category(selected_category, NEWS_CATEGORIES[selected_category])
 
-        news_items = [x.strip() for x in st.session_state[cache_key].split("===") if x.strip()]
+        news_items = [x.strip() for x in news_raw.split("===") if x.strip()]
         count = 0
         for item in news_items:
             lines = item.split("\n")
@@ -2032,9 +2042,10 @@ elif page == "뉴스":
 
 elif page == "국제 금융":
     st.title("국제 금융")
-    if "intl_data" not in st.session_state:
-        with st.spinner("국제 금융 동향 분석 중..."):
-            import re
+
+    @st.cache_data(ttl=1800)
+    def get_intl_data():
+        import re
         result = ask_perplexity("""
 지금 이 시점 기준으로 국제 금융시장의 최신 동향을 한국어로 분석해줘.
 데이터가 제한적이더라도 알고 있는 최신 정보를 바탕으로 반드시 아래 5개 항목을 각각 2~3문장으로 작성해줘.
@@ -2050,8 +2061,11 @@ elif page == "국제 금융":
 """)
         result = re.sub(r'\[\d+\]', '', result)
         result = re.sub(r'\*\*?(.*?)\*\*?', r'\1', result)
-        st.session_state.intl_data = result
-    st.markdown(st.session_state.intl_data)
+        return result
+
+    with st.spinner("국제 금융 동향 분석 중..."):
+        intl_result = get_intl_data()
+    st.markdown(intl_result)
 
 elif page == "실시간 주가":
     st.title("실시간 주가")
@@ -3272,9 +3286,10 @@ elif page == "환율":
 elif page == "경제 캘린더":
     st.title("경제 캘린더")
     st.caption("🔴 중요도 상  🟡 중요도 중  🟢 중요도 하  |  기준 시각: 대한민국 표준시 (KST)")
-    if "calendar_data" not in st.session_state:
-        with st.spinner("경제 일정 불러오는 중..."):
-            result = ask_perplexity("""
+
+    @st.cache_data(ttl=3600)
+    def get_calendar_data():
+        return ask_perplexity("""
 오늘 날짜 기준으로 가장 가까운 미래의 주요 글로벌 경제 지표 발표 일정 10개를 가까운 순서대로 한국어로 알려줘.
 아래 형식으로 반드시 작성해줘.
 
@@ -3291,9 +3306,11 @@ elif page == "경제 캘린더":
 예상치: [예상 수치] (있을 때만)
 ---
 """)
-            st.session_state.calendar_data = result
 
-    items = st.session_state.calendar_data.strip().split("---")
+    with st.spinner("경제 일정 불러오는 중..."):
+        calendar_result = get_calendar_data()
+
+    items = calendar_result.strip().split("---")
     for item in items:
         item = item.strip()
         if not item:
@@ -3339,10 +3356,90 @@ elif page == "AI 추천":
         unsafe_allow_html=True,
     )
 
-    # ── 하위 메뉴: st.tabs ─────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "추천 종목", "주목 섹터", "위험 종목", "주요 공시", "증권사 컨센서스"
-    ])
+    # ── 캐시 함수 정의 ──────────────────────────────────────────
+    @st.cache_data(ttl=1800)
+    def _ai_stock(today):
+        prompt = (
+            f"오늘은 {today}이야. 한국 주식시장에서 오늘 기준 최신 뉴스, DART 공시, 증권사 리포트를 종합 분석해서 "
+            f"보수적 관점의 매수 추천 종목 3~5개를 한국어로 제시해줘.\n\n"
+            f"[분석 기준]\n"
+            f"- 펀더멘털 우선: 실적 성장성, 재무건전성, 영업이익률 기반\n"
+            f"- 증권사 컨센서스 다수(3곳 이상) 매수 의견 종목만\n"
+            f"- 단기 급등 모멘텀만 있는 종목 배제\n"
+            f"- 리스크를 추천 이유만큼 비중 있게 명시\n"
+            f"- 근거 불충분 시 해당 종목 추천 불가 판정\n"
+            f"- 중장기(3~12개월) 관점\n\n"
+            f"각 종목마다 아래 형식 엄수. 구분자는 ===.\n\n"
+            f"종목명: 종목명\n투자의견: 매수/중립/매도\n목표주가: 원\n"
+            f"손절기준: 현재가 대비 몇% 하락 시\n추천근거: 3~4문장. 실적·공시·리포트 근거 포함.\n"
+            f"리스크: 2~3문장. 구체적으로.\n투자기간: 단기/중기/장기\n확신도: 상/중/하\n===\n"
+            f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
+        )
+        res = ask_perplexity(prompt)
+        res = _re.sub(r'\[\d+\]', '', res)
+        res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
+        return res
+
+    @st.cache_data(ttl=1800)
+    def _ai_sector(today):
+        prompt = (
+            f"오늘은 {today}이야. 한국 주식시장에서 보수적 관점으로 지금 주목할 섹터 TOP3를 선정하고 "
+            f"각 섹터마다 대표 종목 2개씩 제시해줘. 단기 테마가 아닌 구조적 성장 섹터 우선.\n\n"
+            f"각 섹터마다 아래 형식 엄수. 구분자는 ===.\n\n"
+            f"섹터명: 섹터명\n선정이유: 2~3문장. 구조적 성장 근거.\n리스크: 1~2문장.\n"
+            f"대표종목1: 종목명 — 한 줄 이유\n대표종목2: 종목명 — 한 줄 이유\n===\n"
+            f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
+        )
+        res = ask_perplexity(prompt)
+        res = _re.sub(r'\[\d+\]', '', res)
+        res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
+        return res
+
+    @st.cache_data(ttl=1800)
+    def _ai_warning(today):
+        prompt = (
+            f"오늘은 {today}이야. 오늘 기준 한국 주식시장에서 악재 공시, 실적 쇼크, "
+            f"대규모 손실, 대주주 매도, 상장폐지 위험 등 위험 신호 종목 3~5개를 찾아줘.\n\n"
+            f"각 종목마다 아래 형식 엄수. 구분자는 ===.\n\n"
+            f"종목명: 종목명\n위험유형: 악재공시/실적쇼크/대주주매도/기타\n"
+            f"위험내용: 2~3문장. 구체적 수치 포함.\n주가영향: 단기 하락 예상 폭 또는 영향\n"
+            f"대응방안: 보유자를 위한 1~2문장 조언\n===\n"
+            f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
+        )
+        res = ask_perplexity(prompt)
+        res = _re.sub(r'\[\d+\]', '', res)
+        res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
+        return res
+
+    @st.cache_data(ttl=1800)
+    def _ai_dart(today):
+        prompt = (
+            f"오늘은 {today}이야. 오늘 DART에 올라온 한국 상장사 주요 공시 중 "
+            f"주가에 큰 영향을 줄 수 있는 공시 5~8개를 정리해줘.\n\n"
+            f"각 공시마다 아래 형식 엄수. 구분자는 ===.\n\n"
+            f"종목명: 종목명\n공시유형: 유상증자/자사주매입/실적공시/대표이사변경/기타\n"
+            f"영향도: HIGH/MID/LOW\n공시내용: 2문장 요약\n주가방향: 상승요인/하락요인/중립\n===\n"
+            f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
+        )
+        res = ask_perplexity(prompt)
+        res = _re.sub(r'\[\d+\]', '', res)
+        res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
+        return res
+
+    @st.cache_data(ttl=1800)
+    def _ai_consensus(today):
+        prompt = (
+            f"오늘은 {today}이야. 최근 1주일 내 국내 주요 증권사(미래에셋·삼성·KB·신한·NH 등)가 "
+            f"발간한 리포트 중 목표주가 상향·하향 종목을 각각 3~5개씩 정리해줘.\n\n"
+            f"각 항목마다 아래 형식 엄수. 구분자는 ===.\n\n"
+            f"구분: 상향 또는 하향\n종목명: 종목명\n증권사: 증권사명\n"
+            f"기존목표가: 원\n신규목표가: 원\n변경이유: 1~2문장\n===\n"
+            f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
+        )
+        res = ask_perplexity(prompt)
+        res = _re.sub(r'\[\d+\]', '', res)
+        res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
+        return res
 
     # ── 공통 함수 ──────────────────────────────────────────────
     def render_card(title, body_html, border_color="#6366f1", bg="#fafafe"):
@@ -3359,9 +3456,6 @@ elif page == "AI 추천":
     def parse_items(raw):
         return [x.strip() for x in raw.split("===") if x.strip()]
 
-    def get_field(lines_dict, key):
-        return lines_dict.get(key, "-")
-
     def parse_fields(item, keys):
         fields = {}
         for line in item.split("\n"):
@@ -3371,105 +3465,53 @@ elif page == "AI 추천":
                     fields[k] = line.replace(f"{k}:", "").strip()
         return fields
 
-    # ══════════════════════════════════════════════════════════
-    # 추천 종목
-    # ══════════════════════════════════════════════════════════
+    # ── 탭 ────────────────────────────────────────────────────
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "추천 종목", "주목 섹터", "위험 종목", "주요 공시", "증권사 컨센서스"
+    ])
+
     with tab1:
         _, col_btn = st.columns([5, 1])
         if col_btn.button("새로고침", key="btn_stock"):
-            st.session_state.pop("ai_rec_stock", None)
+            _ai_stock.clear()
             st.rerun()
+        with st.spinner("추천 종목 분석 중..."):
+            stock_res = _ai_stock(today_str)
+        for item in parse_items(stock_res):
+            f = parse_fields(item, ["종목명","투자의견","목표주가","손절기준","추천근거","리스크","투자기간","확신도"])
+            if not f.get("종목명"): continue
+            확신 = f.get("확신도","중")
+            불가 = "하" in 확신 or "불가" in 확신
+            border = "#ef4444" if 불가 else ("#22c55e" if "상" in 확신 else "#6366f1")
+            badge = "🚫 추천 불가" if 불가 else ("⭐⭐⭐ 확신 높음" if "상" in 확신 else "⭐⭐ 확신 보통")
+            body = (
+                f"<div style='margin-bottom:10px;'>"
+                f"<span style='background:{border};color:white;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;margin-right:8px;'>{badge}</span>"
+                f"<span style='font-size:12px;color:#666;'>투자기간: {f.get('투자기간','-')} | 목표주가: {f.get('목표주가','-')} | 손절기준: {f.get('손절기준','-')}</span>"
+                f"</div>"
+                f"<b>추천 근거</b><br>{f.get('추천근거','-')}<br><br>"
+                f"<b style='color:#ef4444;'>⚠️ 리스크</b><br>{f.get('리스크','-')}"
+            )
+            render_card(f"{f.get('종목명','-')}  ({f.get('투자의견','-')})", body, border_color=border)
 
-        if "ai_rec_stock" not in st.session_state:
-            with st.spinner("뉴스·공시·리포트 수집 및 보수적 분석 중..."):
-                prompt = (
-                    f"오늘은 {today_str}이야. 한국 주식시장에서 오늘 기준 최신 뉴스, DART 공시, 증권사 리포트를 종합 분석해서 "
-                    f"보수적 관점의 매수 추천 종목 3~5개를 한국어로 제시해줘.\n\n"
-                    f"[분석 기준]\n"
-                    f"- 펀더멘털 우선: 실적 성장성, 재무건전성, 영업이익률 기반\n"
-                    f"- 증권사 컨센서스 다수(3곳 이상) 매수 의견 종목만\n"
-                    f"- 단기 급등 모멘텀만 있는 종목 배제\n"
-                    f"- 리스크를 추천 이유만큼 비중 있게 명시\n"
-                    f"- 근거 불충분 시 해당 종목 추천 불가 판정\n"
-                    f"- 중장기(3~12개월) 관점\n\n"
-                    f"각 종목마다 아래 형식 엄수. 구분자는 ===.\n\n"
-                    f"종목명: 종목명\n"
-                    f"투자의견: 매수/중립/매도\n"
-                    f"목표주가: 원\n"
-                    f"손절기준: 현재가 대비 몇% 하락 시\n"
-                    f"추천근거: 3~4문장. 실적·공시·리포트 근거 포함.\n"
-                    f"리스크: 2~3문장. 구체적으로.\n"
-                    f"투자기간: 단기/중기/장기\n"
-                    f"확신도: 상/중/하\n"
-                    f"===\n"
-                    f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
-                )
-                res = ask_perplexity(prompt)
-                res = _re.sub(r'\[\d+\]', '', res)
-                res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
-                st.session_state["ai_rec_stock"] = res
-
-        if "ai_rec_stock" in st.session_state:
-            for item in parse_items(st.session_state["ai_rec_stock"]):
-                f = parse_fields(item, ["종목명","투자의견","목표주가","손절기준","추천근거","리스크","투자기간","확신도"])
-                if not f.get("종목명"): continue
-                확신 = f.get("확신도","중")
-                불가 = "하" in 확신 or "불가" in 확신
-                border = "#ef4444" if 불가 else ("#22c55e" if "상" in 확신 else "#6366f1")
-                badge = "🚫 추천 불가" if 불가 else ("⭐⭐⭐ 확신 높음" if "상" in 확신 else "⭐⭐ 확신 보통")
-                body = (
-                    f"<div style='margin-bottom:10px;'>"
-                    f"<span style='background:{border};color:white;font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px;margin-right:8px;'>{badge}</span>"
-                    f"<span style='font-size:12px;color:#666;'>투자기간: {f.get('투자기간','-')} | 목표주가: {f.get('목표주가','-')} | 손절기준: {f.get('손절기준','-')}</span>"
-                    f"</div>"
-                    f"<b>추천 근거</b><br>{f.get('추천근거','-')}<br><br>"
-                    f"<b style='color:#ef4444;'>⚠️ 리스크</b><br>{f.get('리스크','-')}"
-                )
-                render_card(f"{f.get('종목명','-')}  ({f.get('투자의견','-')})", body, border_color=border)
-
-    # ══════════════════════════════════════════════════════════
-    # 주목 섹터
-    # ══════════════════════════════════════════════════════════
     with tab2:
         _, col_btn = st.columns([5, 1])
         if col_btn.button("새로고침", key="btn_sector"):
-            st.session_state.pop("ai_rec_sector", None)
+            _ai_sector.clear()
             st.rerun()
+        with st.spinner("섹터 분석 중..."):
+            sector_res = _ai_sector(today_str)
+        colors = ["#6366f1", "#0ea5e9", "#22c55e"]
+        for i, item in enumerate(parse_items(sector_res)[:3]):
+            f = parse_fields(item, ["섹터명","선정이유","리스크","대표종목1","대표종목2"])
+            if not f.get("섹터명"): continue
+            body = (
+                f"{f.get('선정이유','-')}<br><br>"
+                f"<b style='color:#ef4444;'>⚠️ 리스크</b><br>{f.get('리스크','-')}<br><br>"
+                f"<b>대표 종목</b><br>• {f.get('대표종목1','-')}<br>• {f.get('대표종목2','-')}"
+            )
+            render_card(f"#{i+1} {f.get('섹터명','-')}", body, border_color=colors[i % 3])
 
-        if "ai_rec_sector" not in st.session_state:
-            with st.spinner("섹터 분석 중..."):
-                prompt = (
-                    f"오늘은 {today_str}이야. 한국 주식시장에서 보수적 관점으로 지금 주목할 섹터 TOP3를 선정하고 "
-                    f"각 섹터마다 대표 종목 2개씩 제시해줘. 단기 테마가 아닌 구조적 성장 섹터 우선.\n\n"
-                    f"각 섹터마다 아래 형식 엄수. 구분자는 ===.\n\n"
-                    f"섹터명: 섹터명\n"
-                    f"선정이유: 2~3문장. 구조적 성장 근거.\n"
-                    f"리스크: 1~2문장.\n"
-                    f"대표종목1: 종목명 — 한 줄 이유\n"
-                    f"대표종목2: 종목명 — 한 줄 이유\n"
-                    f"===\n"
-                    f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
-                )
-                res = ask_perplexity(prompt)
-                res = _re.sub(r'\[\d+\]', '', res)
-                res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
-                st.session_state["ai_rec_sector"] = res
-
-        if "ai_rec_sector" in st.session_state:
-            colors = ["#6366f1", "#0ea5e9", "#22c55e"]
-            for i, item in enumerate(parse_items(st.session_state["ai_rec_sector"])[:3]):
-                f = parse_fields(item, ["섹터명","선정이유","리스크","대표종목1","대표종목2"])
-                if not f.get("섹터명"): continue
-                body = (
-                    f"{f.get('선정이유','-')}<br><br>"
-                    f"<b style='color:#ef4444;'>⚠️ 리스크</b><br>{f.get('리스크','-')}<br><br>"
-                    f"<b>대표 종목</b><br>• {f.get('대표종목1','-')}<br>• {f.get('대표종목2','-')}"
-                )
-                render_card(f"#{i+1} {f.get('섹터명','-')}", body, border_color=colors[i % 3])
-
-    # ══════════════════════════════════════════════════════════
-    # 위험 종목
-    # ══════════════════════════════════════════════════════════
     with tab3:
         st.markdown(
             "<div style='background:#fff0f0;border:1px solid #fca5a5;border-radius:6px;"
@@ -3480,138 +3522,73 @@ elif page == "AI 추천":
         )
         _, col_btn = st.columns([5, 1])
         if col_btn.button("새로고침", key="btn_warning"):
-            st.session_state.pop("ai_rec_warning", None)
+            _ai_warning.clear()
             st.rerun()
+        with st.spinner("위험 신호 스캔 중..."):
+            warning_res = _ai_warning(today_str)
+        for item in parse_items(warning_res):
+            f = parse_fields(item, ["종목명","위험유형","위험내용","주가영향","대응방안"])
+            if not f.get("종목명"): continue
+            body = (
+                f"<span style='background:#ef4444;color:white;font-size:11px;font-weight:700;"
+                f"padding:2px 8px;border-radius:4px;display:inline-block;margin-bottom:10px;'>{f.get('위험유형','-')}</span><br>"
+                f"<b>위험 내용</b><br>{f.get('위험내용','-')}<br><br>"
+                f"<b>주가 영향</b><br>{f.get('주가영향','-')}<br><br>"
+                f"<b style='color:#22c55e;'>💡 대응 방안</b><br>{f.get('대응방안','-')}"
+            )
+            render_card(f.get("종목명","-"), body, border_color="#ef4444", bg="#fff8f8")
 
-        if "ai_rec_warning" not in st.session_state:
-            with st.spinner("위험 신호 스캔 중..."):
-                prompt = (
-                    f"오늘은 {today_str}이야. 오늘 기준 한국 주식시장에서 악재 공시, 실적 쇼크, "
-                    f"대규모 손실, 대주주 매도, 상장폐지 위험 등 위험 신호 종목 3~5개를 찾아줘.\n\n"
-                    f"각 종목마다 아래 형식 엄수. 구분자는 ===.\n\n"
-                    f"종목명: 종목명\n"
-                    f"위험유형: 악재공시/실적쇼크/대주주매도/기타\n"
-                    f"위험내용: 2~3문장. 구체적 수치 포함.\n"
-                    f"주가영향: 단기 하락 예상 폭 또는 영향\n"
-                    f"대응방안: 보유자를 위한 1~2문장 조언\n"
-                    f"===\n"
-                    f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
-                )
-                res = ask_perplexity(prompt)
-                res = _re.sub(r'\[\d+\]', '', res)
-                res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
-                st.session_state["ai_rec_warning"] = res
-
-        if "ai_rec_warning" in st.session_state:
-            for item in parse_items(st.session_state["ai_rec_warning"]):
-                f = parse_fields(item, ["종목명","위험유형","위험내용","주가영향","대응방안"])
-                if not f.get("종목명"): continue
-                body = (
-                    f"<span style='background:#ef4444;color:white;font-size:11px;font-weight:700;"
-                    f"padding:2px 8px;border-radius:4px;display:inline-block;margin-bottom:10px;'>{f.get('위험유형','-')}</span><br>"
-                    f"<b>위험 내용</b><br>{f.get('위험내용','-')}<br><br>"
-                    f"<b>주가 영향</b><br>{f.get('주가영향','-')}<br><br>"
-                    f"<b style='color:#22c55e;'>💡 대응 방안</b><br>{f.get('대응방안','-')}"
-                )
-                render_card(f.get("종목명","-"), body, border_color="#ef4444", bg="#fff8f8")
-
-    # ══════════════════════════════════════════════════════════
-    # 주요 공시
-    # ══════════════════════════════════════════════════════════
     with tab4:
         _, col_btn = st.columns([5, 1])
         if col_btn.button("새로고침", key="btn_dart"):
-            st.session_state.pop("ai_rec_dart", None)
+            _ai_dart.clear()
             st.rerun()
+        with st.spinner("주요 공시 분석 중..."):
+            dart_res = _ai_dart(today_str)
+        for item in parse_items(dart_res):
+            f = parse_fields(item, ["종목명","공시유형","영향도","공시내용","주가방향"])
+            if not f.get("종목명"): continue
+            영향도 = f.get("영향도","MID")
+            border = "#ef4444" if 영향도=="HIGH" else "#f97316" if 영향도=="MID" else "#6b7280"
+            방향 = f.get("주가방향","-")
+            방향색 = "#22c55e" if "상승" in 방향 else "#ef4444" if "하락" in 방향 else "#6b7280"
+            body = (
+                f"<span style='background:{border};color:white;font-size:11px;font-weight:700;"
+                f"padding:2px 8px;border-radius:4px;margin-right:6px;'>영향도 {영향도}</span>"
+                f"<span style='background:{방향색};color:white;font-size:11px;font-weight:700;"
+                f"padding:2px 8px;border-radius:4px;'>{방향}</span><br><br>"
+                f"<b>공시 유형:</b> {f.get('공시유형','-')}<br><br>"
+                f"{f.get('공시내용','-')}"
+            )
+            render_card(f.get("종목명","-"), body, border_color=border)
 
-        if "ai_rec_dart" not in st.session_state:
-            with st.spinner("오늘 주요 공시 분석 중..."):
-                prompt = (
-                    f"오늘은 {today_str}이야. 오늘 DART에 올라온 한국 상장사 주요 공시 중 "
-                    f"주가에 큰 영향을 줄 수 있는 공시 5~8개를 정리해줘.\n\n"
-                    f"각 공시마다 아래 형식 엄수. 구분자는 ===.\n\n"
-                    f"종목명: 종목명\n"
-                    f"공시유형: 유상증자/자사주매입/실적공시/대표이사변경/기타\n"
-                    f"영향도: HIGH/MID/LOW\n"
-                    f"공시내용: 2문장 요약\n"
-                    f"주가방향: 상승요인/하락요인/중립\n"
-                    f"===\n"
-                    f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
-                )
-                res = ask_perplexity(prompt)
-                res = _re.sub(r'\[\d+\]', '', res)
-                res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
-                st.session_state["ai_rec_dart"] = res
-
-        if "ai_rec_dart" in st.session_state:
-            for item in parse_items(st.session_state["ai_rec_dart"]):
-                f = parse_fields(item, ["종목명","공시유형","영향도","공시내용","주가방향"])
-                if not f.get("종목명"): continue
-                영향도 = f.get("영향도","MID")
-                border = "#ef4444" if 영향도=="HIGH" else "#f97316" if 영향도=="MID" else "#6b7280"
-                방향 = f.get("주가방향","-")
-                방향색 = "#22c55e" if "상승" in 방향 else "#ef4444" if "하락" in 방향 else "#6b7280"
-                body = (
-                    f"<span style='background:{border};color:white;font-size:11px;font-weight:700;"
-                    f"padding:2px 8px;border-radius:4px;margin-right:6px;'>영향도 {영향도}</span>"
-                    f"<span style='background:{방향색};color:white;font-size:11px;font-weight:700;"
-                    f"padding:2px 8px;border-radius:4px;'>{방향}</span><br><br>"
-                    f"<b>공시 유형:</b> {f.get('공시유형','-')}<br><br>"
-                    f"{f.get('공시내용','-')}"
-                )
-                render_card(f.get("종목명","-"), body, border_color=border)
-
-    # ══════════════════════════════════════════════════════════
-    # 증권사 컨센서스
-    # ══════════════════════════════════════════════════════════
     with tab5:
         _, col_btn = st.columns([5, 1])
         if col_btn.button("새로고침", key="btn_consensus"):
-            st.session_state.pop("ai_rec_consensus", None)
+            _ai_consensus.clear()
             st.rerun()
-
-        if "ai_rec_consensus" not in st.session_state:
-            with st.spinner("증권사 리포트 수집 중..."):
-                prompt = (
-                    f"오늘은 {today_str}이야. 최근 1주일 내 국내 주요 증권사(미래에셋·삼성·KB·신한·NH 등)가 "
-                    f"발간한 리포트 중 목표주가 상향·하향 종목을 각각 3~5개씩 정리해줘.\n\n"
-                    f"각 항목마다 아래 형식 엄수. 구분자는 ===.\n\n"
-                    f"구분: 상향 또는 하향\n"
-                    f"종목명: 종목명\n"
-                    f"증권사: 증권사명\n"
-                    f"기존목표가: 원\n"
-                    f"신규목표가: 원\n"
-                    f"변경이유: 1~2문장\n"
-                    f"===\n"
-                    f"규칙: 대괄호 숫자 각주 절대 금지. 별표 마크다운 절대 금지."
+        with st.spinner("증권사 리포트 수집 중..."):
+            consensus_res = _ai_consensus(today_str)
+        items = parse_items(consensus_res)
+        상향 = [x for x in items if "상향" in x[:60]]
+        하향 = [x for x in items if "하향" in x[:60]]
+        col_up, col_dn = st.columns(2)
+        for col, group, color, label in [
+            (col_up, 상향, "#22c55e", "📈 목표주가 상향"),
+            (col_dn, 하향, "#ef4444", "📉 목표주가 하향"),
+        ]:
+            with col:
+                st.markdown(
+                    f"<div style='font-size:15px;font-weight:700;color:{color};margin-bottom:12px;'>{label}</div>",
+                    unsafe_allow_html=True,
                 )
-                res = ask_perplexity(prompt)
-                res = _re.sub(r'\[\d+\]', '', res)
-                res = _re.sub(r'\*\*?(.*?)\*\*?', r'\1', res)
-                st.session_state["ai_rec_consensus"] = res
-
-        if "ai_rec_consensus" in st.session_state:
-            items = parse_items(st.session_state["ai_rec_consensus"])
-            상향 = [x for x in items if "상향" in x[:60]]
-            하향 = [x for x in items if "하향" in x[:60]]
-
-            col_up, col_dn = st.columns(2)
-            for col, group, color, label in [
-                (col_up, 상향, "#22c55e", "📈 목표주가 상향"),
-                (col_dn, 하향, "#ef4444", "📉 목표주가 하향"),
-            ]:
-                with col:
-                    st.markdown(
-                        f"<div style='font-size:15px;font-weight:700;color:{color};margin-bottom:12px;'>{label}</div>",
-                        unsafe_allow_html=True,
+                for item in group:
+                    f = parse_fields(item, ["종목명","증권사","기존목표가","신규목표가","변경이유"])
+                    if not f.get("종목명"): continue
+                    body = (
+                        f"<b>{f.get('증권사','-')}</b>  |  "
+                        f"{f.get('기존목표가','-')} → "
+                        f"<b style='color:{color};'>{f.get('신규목표가','-')}</b><br><br>"
+                        f"{f.get('변경이유','-')}"
                     )
-                    for item in group:
-                        f = parse_fields(item, ["종목명","증권사","기존목표가","신규목표가","변경이유"])
-                        if not f.get("종목명"): continue
-                        body = (
-                            f"<b>{f.get('증권사','-')}</b>  |  "
-                            f"{f.get('기존목표가','-')} → "
-                            f"<b style='color:{color};'>{f.get('신규목표가','-')}</b><br><br>"
-                            f"{f.get('변경이유','-')}"
-                        )
-                        render_card(f.get("종목명","-"), body, border_color=color)
+                    render_card(f.get("종목명","-"), body, border_color=color)
