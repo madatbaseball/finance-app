@@ -1058,11 +1058,11 @@ if page == "홈":
     """, unsafe_allow_html=True)
 
     LOGO_MAP = {
-        "삼성전자":      "https://logo.clearbit.com/samsung.com",
-        "SK하이닉스":    "https://logo.clearbit.com/skhynix.com",
-        "LG에너지솔루션": "https://logo.clearbit.com/lgenergysolution.com",
-        "삼성바이오로직스":"https://logo.clearbit.com/samsungbiologics.com",
-        "현대차":        "https://logo.clearbit.com/hyundai.com",
+        "삼성전자":      "https://www.google.com/s2/favicons?domain=samsung.com&sz=64",
+        "SK하이닉스":    "https://www.google.com/s2/favicons?domain=skhynix.com&sz=64",
+        "LG에너지솔루션": "https://www.google.com/s2/favicons?domain=lgenergysolution.com&sz=64",
+        "삼성바이오로직스":"https://www.google.com/s2/favicons?domain=samsungbiologics.com&sz=64",
+        "현대차":        "https://www.google.com/s2/favicons?domain=hyundai.com&sz=64",
     }
 
     top5 = KOSPI_TOP[:5]
