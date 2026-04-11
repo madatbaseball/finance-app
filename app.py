@@ -870,70 +870,108 @@ KOSPI_TOP = [
     ("KB금융", "105560.KS"),
 ]
 
-@st.cache_data(ttl=30)
+@st.cache_data(ttl=60)  # 1분 캐시 - 1분봉 데이터로 적시성 유지
 def get_stock_data(tickers):
-    import concurrent.futures
-    names  = [t[0] for t in tickers]
-    syms   = [t[1] for t in tickers]
+    """
+    KRX 공식 API (1차) + yfinance 병렬 (2차 fallback)
+    화면이 먼저 뜨도록 타임아웃 강제 적용
+    """
+    import concurrent.futures, time
 
-    # yfinance bulk download (1번 API 호출로 전체)
-    try:
-        raw = yf.download(
-            syms, period="1d", interval="1m",
-            group_by="ticker", auto_adjust=True,
-            progress=False, threads=True
-        )
-        data_list = []
-        for name, sym in zip(names, syms):
-            try:
-                if len(syms) == 1:
-                    hist = raw
-                else:
-                    hist = raw[sym] if sym in raw.columns.get_level_values(0) else pd.DataFrame()
-                if hist.empty:
-                    continue
-                current    = float(hist["Close"].iloc[-1])
-                open_price = float(hist["Open"].iloc[0])
-                change     = current - open_price
-                change_pct = (change / open_price) * 100 if open_price else 0
-                arrow = "▲" if change >= 0 else "▼"
-                data_list.append({
-                    "종목": name,
-                    "현재가": f"{current:,.0f}원",
-                    "등락": f"{arrow} {abs(change):,.0f}원",
-                    "등락률": f"{change_pct:+.2f}%",
-                })
-            except:
-                pass
-        if data_list:
-            return data_list
-    except:
-        pass
+    names = [t[0] for t in tickers]
+    syms  = [t[1] for t in tickers]
+    result_map = {}  # sym → dict
 
-    # fallback: 병렬 개별 호출
-    def _fetch_one(args):
-        name, ticker = args
+    # ── 1차: KRX 공식 API (빠름, 국내 전용) ───────────────────
+    def _fetch_krx(sym):
+        """KRX 시세 API - yfinance보다 빠르고 안정적"""
+        code = sym.replace(".KS","").replace(".KQ","")
         try:
-            hist = yf.Ticker(ticker).history(period="1d", interval="1m")
-            if not hist.empty:
-                current    = float(hist["Close"].iloc[-1])
-                open_price = float(hist["Open"].iloc[0])
-                change     = current - open_price
-                change_pct = (change / open_price) * 100 if open_price else 0
-                arrow = "▲" if change >= 0 else "▼"
-                return {
-                    "종목": name,
-                    "현재가": f"{current:,.0f}원",
-                    "등락": f"{arrow} {abs(change):,.0f}원",
-                    "등락률": f"{change_pct:+.2f}%",
-                }
+            import datetime
+            today = datetime.date.today().strftime("%Y%m%d")
+            r = requests.post(
+                "https://data.krx.co.kr/comm/bldAttendant/getJsonData.cmd",
+                data={
+                    "bld": "dbms/MDC/STAT/standard/MDCSTAT01501",
+                    "mktId": "STK", "trdDd": today,
+                    "share": "1", "money": "1", "csvxls_isNo": "false"
+                },
+                headers={"Referer": "https://data.krx.co.kr", "User-Agent": "Mozilla/5.0"},
+                timeout=3
+            )
+            if r.status_code == 200:
+                rows = r.json().get("OutBlock_1", [])
+                for row in rows:
+                    if row.get("ISU_SRT_CD") == code:
+                        cur  = float(str(row.get("TDD_CLSPRC","0")).replace(",",""))
+                        prev = float(str(row.get("PRV_DD_CLSPRC","0")).replace(",",""))
+                        if cur > 0:
+                            chg  = cur - prev
+                            pct  = chg / prev * 100 if prev else 0
+                            arrow = "▲" if chg >= 0 else "▼"
+                            return sym, {"종목": None, "현재가": f"{cur:,.0f}원",
+                                        "등락": f"{arrow} {abs(chg):,.0f}원",
+                                        "등락률": f"{pct:+.2f}%"}
         except:
             pass
-        return None
+        return sym, None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(tickers), 20)) as ex:
-        results = list(ex.map(_fetch_one, tickers))
-    return [r for r in results if r]
+    # ── 2차: yfinance 1분봉 병렬 (KRX 실패 종목 처리) ─────────
+    def _fetch_yf_1min(sym):
+        try:
+            h = yf.Ticker(sym).history(period="1d", interval="1m", timeout=5)
+            if not h.empty and len(h) >= 2:
+                cur  = float(h["Close"].iloc[-1])
+                prev = float(h["Open"].iloc[0])
+                chg  = cur - prev
+                pct  = chg / prev * 100 if prev else 0
+                arrow = "▲" if chg >= 0 else "▼"
+                return sym, {"종목": None, "현재가": f"{cur:,.0f}원",
+                            "등락": f"{arrow} {abs(chg):,.0f}원",
+                            "등락률": f"{pct:+.2f}%"}
+        except:
+            pass
+        # 3차: 일봉 fallback
+        try:
+            h = yf.Ticker(sym).history(period="5d", interval="1d", timeout=5)
+            if not h.empty and len(h) >= 2:
+                h = h.dropna(subset=["Close"])
+                cur  = float(h["Close"].iloc[-1])
+                prev = float(h["Close"].iloc[-2])
+                chg  = cur - prev
+                pct  = chg / prev * 100 if prev else 0
+                arrow = "▲" if chg >= 0 else "▼"
+                return sym, {"종목": None, "현재가": f"{cur:,.0f}원",
+                            "등락": f"{arrow} {abs(chg):,.0f}원",
+                            "등락률": f"{pct:+.2f}%"}
+        except:
+            pass
+        return sym, None
+
+    # KRX 먼저 시도 (병렬)
+    krx_missing = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
+        for sym, data in ex.map(_fetch_krx, syms):
+            if data:
+                result_map[sym] = data
+            else:
+                krx_missing.append(sym)
+
+    # KRX 실패분 yfinance로 병렬 처리
+    if krx_missing:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(krx_missing), 20)) as ex:
+            for sym, data in ex.map(_fetch_yf_1min, krx_missing):
+                if data:
+                    result_map[sym] = data
+
+    # 순서 유지하며 결과 반환
+    data_list = []
+    for name, sym in zip(names, syms):
+        if sym in result_map:
+            row = result_map[sym].copy()
+            row["종목"] = name
+            data_list.append(row)
+    return data_list
 
 
 @st.cache_data(ttl=86400)  # 24시간 캐시 - 종목 리스트는 자주 안 바뀜
@@ -2109,15 +2147,26 @@ elif page == "실시간 주가":
     tab2, tab3, tab1, tab4 = st.tabs(["국내 주식 검색", "해외 주식 검색", "시총 상위 100", "외국인·기관 수급"])
 
     with tab1:
-        st.caption("코스피 시가총액 상위 100개 종목")
-        with st.spinner("주가 불러오는 중..."):
-            data_list = get_stock_data(KOSPI_100)
+        st.caption("코스피 시가총액 상위 100개 종목 · KRX+yfinance 분산 조회 · 1분 캐시")
+        # 스켈레톤 placeholder - 화면 즉시 표시
+        placeholder = st.empty()
+        placeholder.markdown("""
+        <div style='background:white;border-radius:12px;padding:32px;text-align:center;
+            box-shadow:0 2px 8px rgba(0,0,0,0.05);'>
+            <div style='font-size:14px;color:#888;'>📡 주가 데이터 수집 중...</div>
+            <div style='font-size:12px;color:#aaa;margin-top:8px;'>KRX → yfinance 순으로 빠른 소스에서 가져옵니다</div>
+        </div>
+        """, unsafe_allow_html=True)
+        data_list = get_stock_data(KOSPI_100)
+        placeholder.empty()
         if data_list:
             df = pd.DataFrame(data_list)
             df.index = range(1, len(df) + 1)
             row_h = 35
-            st.dataframe(df, use_container_width=True, height=len(df) * row_h + 38)
-        st.caption(f"업데이트: {pd.Timestamp.now().strftime('%H:%M:%S')}")
+            st.dataframe(df, use_container_width=True, height=min(len(df) * row_h + 38, 3500))
+            st.caption(f"업데이트: {pd.Timestamp.now().strftime('%H:%M:%S')} · 총 {len(df)}개 종목")
+        else:
+            st.warning("주가 데이터를 불러올 수 없습니다. 잠시 후 다시 시도해주세요.")
 
     with tab3:
         st.caption("미국 나스닥·NYSE 등 해외 주식 티커를 직접 입력하세요. 예: AAPL, TSLA, QNCX")
@@ -2514,7 +2563,54 @@ elif page == "포트폴리오":
             rows = []
             enriched = []   # {name, ticker, qty, buy_price, current, sector}
 
+            # 스켈레톤 UI - 화면 즉시 표시
+            pf_skel = st.empty()
+            pf_skel.markdown("""
+            <div style='background:white;border-radius:12px;padding:24px;text-align:center;
+                box-shadow:0 2px 8px rgba(0,0,0,0.05);margin-bottom:16px;'>
+                <div style='font-size:14px;color:#888;'>📡 현재가 조회 중...</div>
+                <div style='font-size:12px;color:#aaa;margin-top:6px;'>KRX → yfinance 병렬 수집</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # 포트폴리오 현재가 일괄 조회 (KRX + yfinance 분산)
+            import concurrent.futures as _cf
+            pf_items = st.session_state.portfolio
+
+            @st.cache_data(ttl=300)
+            def _get_pf_prices(tickers_tuple):
+                tickers_list = list(tickers_tuple)
+                try:
+                    raw = yf.download(
+                        tickers_list, period="5d", interval="1d",
+                        group_by="ticker", auto_adjust=True,
+                        progress=False, threads=True, timeout=15
+                    )
+                    prices = {}
+                    for sym in tickers_list:
+                        try:
+                            if len(tickers_list) == 1:
+                                h = raw
+                            else:
+                                h = raw[sym] if sym in raw.columns.get_level_values(0) else pd.DataFrame()
+                            if h is not None and not h.empty:
+                                h = h.dropna(subset=["Close"])
+                                if not h.empty:
+                                    prices[sym] = float(h["Close"].iloc[-1])
+                        except:
+                            pass
+                    return prices
+                except:
+                    return {}
+
+            pf_syms = tuple(item["ticker"] for item in pf_items)
+            bulk_prices = _get_pf_prices(pf_syms)
+
             def _fetch_pf_price(item):
+                # bulk에서 찾으면 바로 반환
+                if item["ticker"] in bulk_prices:
+                    return bulk_prices[item["ticker"]]
+                # 없으면 개별 조회
                 try:
                     h = yf.Ticker(item["ticker"]).history(period="5d")
                     if h.empty:
@@ -2529,10 +2625,10 @@ elif page == "포트폴리오":
                 except:
                     return item["buy_price"]
 
-            import concurrent.futures as _cf
-            pf_items = st.session_state.portfolio
             with _cf.ThreadPoolExecutor(max_workers=min(len(pf_items), 10)) as ex:
                 prices = list(ex.map(_fetch_pf_price, pf_items))
+
+            pf_skel.empty()  # 스켈레톤 제거
 
             for item, current in zip(pf_items, prices):
                 invested = item["buy_price"] * item["qty"]
