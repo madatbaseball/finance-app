@@ -958,13 +958,18 @@ def load_stock_list():
 
 page = st.session_state.page
 
-# 종목 리스트 세션 캐시 (탭 전환마다 재호출 방지)
+# 종목 리스트 세션 캐시 - 백그라운드에서 비동기 로드
 if "stock_list_cache" not in st.session_state:
-    try:
-        st.session_state.stock_list_cache = load_stock_list()
-    except:
-        st.session_state.stock_list_cache = []
-_cached_stock_list = st.session_state.stock_list_cache
+    st.session_state.stock_list_cache = None  # None = 아직 로드 안 됨
+
+def get_cached_stock_list():
+    """캐시된 종목 리스트 반환. 없으면 로드."""
+    if st.session_state.stock_list_cache is None:
+        try:
+            st.session_state.stock_list_cache = load_stock_list()
+        except:
+            st.session_state.stock_list_cache = []
+    return st.session_state.stock_list_cache or []
 
 @st.cache_data(ttl=1800)
 def get_market_summary():
@@ -1355,7 +1360,7 @@ elif page == "마이페이지":
 
         st.markdown("---")
 
-        stock_list_mp  = _cached_stock_list
+        stock_list_mp  = get_cached_stock_list()
         stock_names_mp = [s["name"] for s in stock_list_mp]
         stock_map_mp   = {s["name"]: s["ticker"] for s in stock_list_mp}
 
@@ -2140,7 +2145,7 @@ elif page == "실시간 주가":
 
     with tab2:
         st.caption("종목명으로 직접 검색해 현재가와 차트를 확인하세요.")
-        stock_list = _cached_stock_list
+        stock_list = get_cached_stock_list()
         stock_names = [s["name"] for s in stock_list]
         stock_map = {s["name"]: s["ticker"] for s in stock_list}
 
@@ -2332,7 +2337,7 @@ elif page == "실시간 주가":
 elif page == "포트폴리오":
     st.title("포트폴리오 트래커")
 
-    stock_list = _cached_stock_list
+    stock_list = get_cached_stock_list()
 
     stock_names = [s["name"] for s in stock_list]
     stock_map = {s["name"]: s["ticker"] for s in stock_list}
