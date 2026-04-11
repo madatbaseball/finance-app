@@ -13,6 +13,67 @@ PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY")
 DART_API_KEY = os.getenv("DART_API_KEY")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+GMAIL_USER   = os.getenv("GMAIL_USER", "")
+GMAIL_APP_PW = os.getenv("GMAIL_APP_PW", "")
+
+def send_alert_email(to_email, stock_name, target_price, direction, current_price):
+    """목표가 도달 시 이메일 발송"""
+    if not GMAIL_USER or not GMAIL_APP_PW or not to_email:
+        return False
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        subject = f"[Finance App] {stock_name} 목표가 도달 알림"
+        body = f"""
+        <div style="font-family:sans-serif;max-width:480px;margin:0 auto;padding:32px 24px;
+            background:#f8f9fa;border-radius:12px;">
+            <div style="font-size:20px;font-weight:800;color:#1a1e2e;margin-bottom:8px;">
+                목표가 도달 알림
+            </div>
+            <div style="font-size:14px;color:#888;margin-bottom:24px;">Finance App</div>
+
+            <div style="background:white;border-radius:10px;padding:20px 24px;
+                border-left:4px solid #3182f6;margin-bottom:16px;">
+                <div style="font-size:16px;font-weight:700;color:#1a1e2e;margin-bottom:12px;">
+                    {stock_name}
+                </div>
+                <table style="width:100%;font-size:14px;color:#444;">
+                    <tr>
+                        <td style="padding:4px 0;color:#888;">현재가</td>
+                        <td style="text-align:right;font-weight:700;color:#1a1e2e;">
+                            {current_price:,.0f}원
+                        </td>
+                    </tr>
+                    <tr>
+                        <td style="padding:4px 0;color:#888;">목표가</td>
+                        <td style="text-align:right;font-weight:700;color:#3182f6;">
+                            {target_price:,.0f}원 {direction}
+                        </td>
+                    </tr>
+                </table>
+            </div>
+
+            <div style="font-size:13px;color:#aaa;text-align:center;margin-top:16px;">
+                본 알림은 Finance App에서 자동 발송되었습니다.<br>
+                투자 판단과 책임은 본인에게 있습니다.
+            </div>
+        </div>
+        """
+
+        msg = MIMEMultipart("alternative")
+        msg["Subject"] = subject
+        msg["From"]    = GMAIL_USER
+        msg["To"]      = to_email
+        msg.attach(MIMEText(body, "html", "utf-8"))
+
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_USER, GMAIL_APP_PW)
+            server.sendmail(GMAIL_USER, to_email, msg.as_string())
+        return True
+    except Exception as e:
+        return False
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
@@ -400,9 +461,13 @@ st.markdown("""
         transform: translateY(-1px) !important;
     }
 
-    /* 스피너 색상 */
+    /* 스피너 - 텍스트 숨기고 아이콘만 */
     .stSpinner > div {
         border-top-color: #3182f6 !important;
+    }
+    [data-testid="stSpinner"] p,
+    [data-testid="stSpinner"] span {
+        display: none !important;
     }
 
     /* 캡션 */
@@ -724,7 +789,10 @@ def get_ticker_banner_data():
                 td[name] = result
     return td
 
-_ticker_banner = get_ticker_banner_data()
+# 티커 배너: session_state에 없을 때만 호출 (탭 전환 시 재호출 방지)
+if "ticker_banner_cache" not in st.session_state:
+    st.session_state.ticker_banner_cache = get_ticker_banner_data()
+_ticker_banner = st.session_state.ticker_banner_cache
 
 _ticker_items = []
 for _name, (_cur, _chg, _pct) in _ticker_banner.items():
@@ -889,6 +957,14 @@ def load_stock_list():
     return stocks
 
 page = st.session_state.page
+
+# 종목 리스트 세션 캐시 (탭 전환마다 재호출 방지)
+if "stock_list_cache" not in st.session_state:
+    try:
+        st.session_state.stock_list_cache = load_stock_list()
+    except:
+        st.session_state.stock_list_cache = []
+_cached_stock_list = st.session_state.stock_list_cache
 
 @st.cache_data(ttl=1800)
 def get_market_summary():
@@ -1260,10 +1336,26 @@ elif page == "마이페이지":
     # ── 알림 설정 ───────────────────────────────────────────────
     with mp_tab3:
         st.markdown("#### 목표가 알림 설정")
-        st.caption("목표가 도달 시 이메일로 알림을 받으려면 '내 정보' 탭에서 이메일을 먼저 등록하세요.")
 
-        with st.spinner("종목 목록 불러오는 중..."):
-            stock_list_mp = load_stock_list()
+        # 이메일 상태 확인
+        cur_email = st.session_state.user.get("email", "") or ""
+        if not cur_email:
+            st.warning("이메일 미등록 상태입니다. '내 정보' 탭에서 이메일을 먼저 등록해주세요.")
+        else:
+            st.caption(f"알림 수신 이메일: **{cur_email}**")
+            # 테스트 발송 버튼
+            test_col, _ = st.columns([1, 3])
+            if test_col.button("테스트 이메일 발송", key="test_email_btn"):
+                with st.spinner("발송 중..."):
+                    ok = send_alert_email(cur_email, "테스트 종목", 50000, "이상", 52000)
+                if ok:
+                    st.success(f"✅ {cur_email} 으로 테스트 이메일이 발송됐습니다!")
+                else:
+                    st.error("❌ 발송 실패. .env의 GMAIL_USER / GMAIL_APP_PW를 확인해주세요.")
+
+        st.markdown("---")
+
+        stock_list_mp  = _cached_stock_list
         stock_names_mp = [s["name"] for s in stock_list_mp]
         stock_map_mp   = {s["name"]: s["ticker"] for s in stock_list_mp}
 
@@ -2048,7 +2140,7 @@ elif page == "실시간 주가":
 
     with tab2:
         st.caption("종목명으로 직접 검색해 현재가와 차트를 확인하세요.")
-        stock_list = load_stock_list()  # 24h 캐시
+        stock_list = _cached_stock_list
         stock_names = [s["name"] for s in stock_list]
         stock_map = {s["name"]: s["ticker"] for s in stock_list}
 
@@ -2240,10 +2332,61 @@ elif page == "실시간 주가":
 elif page == "포트폴리오":
     st.title("포트폴리오 트래커")
 
-    stock_list = load_stock_list()  # 24h 캐시
+    stock_list = _cached_stock_list
 
     stock_names = [s["name"] for s in stock_list]
     stock_map = {s["name"]: s["ticker"] for s in stock_list}
+
+    # ── 목표가 알림 체크 (5분에 1번만) ──────────────────────
+    import time as _time
+    _last_alert_check = st.session_state.get("last_alert_check", 0)
+    if _time.time() - _last_alert_check > 300:  # 5분 간격
+        st.session_state.last_alert_check = _time.time()
+        def check_price_alerts():
+            user = st.session_state.user
+            if not user:
+                return
+            email = user.get("email", "")
+            if not email:
+                return
+            try:
+                alerts = supabase.table("price_alerts").select("*")\
+                    .eq("user_id", user["id"]).eq("is_active", True).execute().data or []
+                if not alerts:
+                    return
+                import concurrent.futures as _cfa
+                def _check_one(al):
+                    try:
+                        ticker = al.get("ticker", "")
+                        if not ticker:
+                            return None
+                        h = yf.Ticker(ticker).history(period="1d")
+                        if h.empty:
+                            return None
+                        cur = float(h["Close"].iloc[-1])
+                        target = float(al["target_price"])
+                        direction = al.get("direction", "")
+                        hit = (direction == "이상" and cur >= target) or \
+                              (direction == "이하" and cur <= target)
+                        return (al, cur) if hit else None
+                    except:
+                        return None
+                with _cfa.ThreadPoolExecutor(max_workers=5) as ex:
+                    results = list(ex.map(_check_one, alerts))
+                for r in results:
+                    if r:
+                        al, cur = r
+                        sent = send_alert_email(email, al["name"],
+                                                float(al["target_price"]),
+                                                al["direction"], cur)
+                        if sent:
+                            supabase.table("price_alerts")\
+                                .update({"is_active": False})\
+                                .eq("id", al["id"]).execute()
+                            st.toast(f"📧 {al['name']} 목표가 알림 이메일 발송됨!", icon="✅")
+            except:
+                pass
+        check_price_alerts()
 
     pf_main_tab1, pf_main_tab2, pf_main_tab3 = st.tabs(["포트폴리오", "관심종목", "시뮬레이터"])
 
