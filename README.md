@@ -1,4 +1,4 @@
-# 📊 Finance App
+# Finance App
 
 AI 기반 주가 분석 및 금융 정보 제공 웹 애플리케이션
 
