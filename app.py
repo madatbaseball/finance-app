@@ -537,8 +537,22 @@ def ask_perplexity(prompt):
         "model": "sonar",
         "messages": [{"role": "user", "content": prompt}]
     }
-    response = requests.post("https://api.perplexity.ai/chat/completions", headers=headers, json=data)
-    return response.json()["choices"][0]["message"]["content"]
+    try:
+        response = requests.post(
+            "https://api.perplexity.ai/chat/completions",
+            headers=headers,
+            json=data,
+            timeout=30
+        )
+        result = response.json()
+        if "choices" in result and len(result["choices"]) > 0:
+            return result["choices"][0]["message"]["content"]
+        elif "error" in result:
+            return f"API 오류: {result['error'].get('message', '알 수 없는 오류')}"
+        else:
+            return "응답을 가져올 수 없습니다."
+    except Exception as e:
+        return f"요청 실패: {str(e)}"
 
 KOSPI_TOP = [
     ("삼성전자", "005930.KS"), ("SK하이닉스", "000660.KS"), ("LG에너지솔루션", "373220.KS"),
